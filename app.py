@@ -184,33 +184,84 @@ def fill_plan(xlsx_bytes, text):
 PAGE = b"""<!doctype html><meta charset=utf-8><title>Live Link Tracker</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>
-body{font:16px system-ui;max-width:1000px;margin:30px auto;padding:0 16px}
-button{padding:9px 16px;font-size:15px;cursor:pointer}
-table{border-collapse:collapse;width:100%;font-size:13px;margin-top:10px}
-th{background:#1F3864;color:#fff;padding:6px;text-align:left;position:sticky;top:0}
-td{border:1px solid #ccc;padding:5px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-tr.dup td{background:#FF9999;color:#9C0006;font-weight:bold}
-td.gap{background:#FFF2CC}
-#wrap{max-height:520px;overflow:auto}
+:root{--bg:#141414;--card:#1f1f1f;--ink:#f5f5f1;--mute:#a3a3a3;--line:#333;--brand:#e50914;--brand2:#b20710;--ok:#46d369;--head:#000;--zebra:#262626}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Netflix Sans","Helvetica Neue",Helvetica,Arial,Inter,sans-serif}
+.hero{background:radial-gradient(ellipse at 20% 0,rgba(229,9,20,.55),transparent 55%),linear-gradient(180deg,#000,#141414);color:#fff;padding:34px 16px 84px;border-bottom:1px solid #222}
+.wrap{max-width:1040px;margin:0 auto}
+.brand{font-weight:900;letter-spacing:3px;color:var(--brand);font-size:14px;text-transform:uppercase;margin-bottom:26px}
+.hero h1{margin:0 0 10px;font-size:48px;line-height:1.05;font-weight:900;letter-spacing:-1.5px}
+.hero h1 b{color:var(--brand)}
+.hero p{margin:0;color:#d2d2d2;max-width:600px;font-size:17px}
+.pill{display:inline-block;border:1px solid #555;border-radius:4px;padding:2px 10px;font-size:12px;margin:18px 0 0;color:#ddd}
+main{max-width:1040px;margin:-56px auto 40px;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:22px;box-shadow:0 14px 40px rgba(0,0,0,.6);margin-bottom:18px}
+.step{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;margin-bottom:12px}
+.step i{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:4px;background:var(--brand);color:#fff;font-style:normal;font-size:13px;font-weight:900}
+textarea{width:100%;min-height:150px;border:1px solid #444;border-radius:4px;background:#333;color:#fff;padding:12px;font:13px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
+textarea:focus{outline:none;border-color:#fff;box-shadow:0 0 0 2px rgba(229,9,20,.6)}
+.hint{color:var(--mute);font-size:13px;margin:8px 0 0}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:720px){.opts{grid-template-columns:1fr}.hero h1{font-size:34px}}
+.opt{border:1px solid var(--line);border-radius:8px;padding:16px;background:#181818;transition:.2s}
+.opt:hover{transform:scale(1.02);border-color:#666;box-shadow:0 10px 30px rgba(0,0,0,.7)}
+.opt h3{margin:0 0 4px;font-size:17px}.opt p{margin:0 0 12px;color:var(--mute);font-size:13px}
+button{border:0;border-radius:4px;padding:11px 20px;font:700 15px inherit;cursor:pointer;transition:.15s}
+.pri{background:var(--brand);color:#fff}
+.pri:hover{background:#f6121d;transform:scale(1.03)}
+.sec{background:rgba(109,109,110,.7);color:#fff}.sec:hover{background:rgba(109,109,110,.45)}
+.file{display:block;border:2px dashed #555;border-radius:6px;padding:12px;text-align:center;color:var(--mute);cursor:pointer;margin-bottom:12px;font-size:13px}
+.file:hover{border-color:var(--brand);color:#fff}.file input{display:none}
+#msg{font-weight:700;color:#fff;min-height:22px;margin:0 0 6px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+#cmsg{color:var(--ok);font-weight:700;font-size:13px}
+.tw{max-height:540px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{background:var(--head);color:#fff;padding:10px;text-align:left;position:sticky;top:0;font-size:11px;letter-spacing:1px;border-bottom:2px solid var(--brand)}
+td{border-top:1px solid var(--line);padding:8px 10px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:nth-child(even) td{background:var(--zebra)}
+tr.dup td{background:#e50914!important;color:#fff;font-weight:700}
+td.gap{background:#5a4a00!important;color:#ffe27a}
+td[contenteditable]:focus{outline:2px solid #fff}
+footer{text-align:center;color:var(--mute);font-size:12px;padding:10px 16px 34px;border-top:1px solid #222}
+footer b{color:#fff}
 </style>
-<body>
-<h2>Live Link Tracker</h2>
-<p>Paste the vendor's live links (one per line). Anything after <code>?</code> is removed. Duplicates are marked red.</p>
-<textarea id=links rows=9 style="width:100%;font:14px monospace" placeholder="https://www.instagram.com/reel/XXXX/?igsh=..."></textarea>
-<p><b>Option A &ndash; New tracker</b><br><button onclick="go('tracker')">Make tracker table</button></p>
-<p><b>Option B &ndash; Paste into an existing plan</b><br>
-<input type=file id=plan accept=".xlsx"> <button onclick="go('plan')">Fill plan with live links</button></p>
-<p id=msg style="color:#444"></p>
-<div id=out style="display:none">
- <button onclick="dl()">Download Excel</button>
- <button id=cp1 onclick="cp(0,true)">Copy table</button>
- <button id=cp2 onclick="cp(1,false)" style="display:none">Copy LIVE LINK + DATE only</button>
- <span id=cmsg style="color:green"></span>
- <p id=note style="font-size:13px;color:#666"></p>
- <div id=wrap></div><div id=extra></div>
+<div class=hero><div class=wrap><div class=brand>Nikhilesh Bhatia</div>
+<h1>Live Link <b>Tracker</b></h1>
+<p>Paste the vendor's live links and get a clean tracker, or drop them straight into your plan. Duplicates are flagged in red.</p><span class=pill>Instagram campaign tool &middot; Made by Nikhilesh Bhatia</span></div></div>
+<main>
+<div class=card>
+ <div class=step><i>1</i>Paste live links</div>
+ <textarea id=links placeholder="https://www.instagram.com/reel/XXXXXXXX/?igsh=...&#10;https://www.instagram.com/p/YYYYYYYY/"></textarea>
+ <p class=hint>One link per line. Extra characters after <b>?</b> are removed automatically.</p>
 </div>
+<div class=card>
+ <div class=step><i>2</i>Choose what to make</div>
+ <div class=opts>
+  <div class=opt><h3>New tracker</h3><p>SNO, profile, followers, live link and live date in one table.</p>
+   <button class="pri" onclick="go('tracker')">Make tracker table</button></div>
+  <div class=opt><h3>Fill my plan</h3><p>Upload your plan Excel and the live links are pasted next to each page.</p>
+   <label class=file><input type=file id=plan accept=".xlsx"><span id=fn>Click to choose plan .xlsx</span></label>
+   <button class="pri" onclick="go('plan')">Fill plan with live links</button></div>
+ </div>
+</div>
+<p id=msg></p>
+<div class=card id=out style="display:none">
+ <div class=step><i>3</i>Your result</div>
+ <div class=bar>
+  <button class="pri" onclick="dl()">Download Excel</button>
+  <button class="sec" id=cp1 onclick="cp(0,true)">Copy table</button>
+  <button class="sec" id=cp2 onclick="cp(1,false)" style="display:none">Copy LIVE LINK + DATE only</button>
+  <span id=cmsg></span>
+ </div>
+ <p class=hint id=note></p>
+ <div class=tw id=wrap></div><div id=extra></div>
+</div>
+</main>
+<footer>Red = duplicate link &middot; Yellow = missing, click to type<br><br>Tool made by <b>Nikhilesh Bhatia</b><br>&copy; 2026 Nikhilesh Bhatia. All rights reserved. Copyrighted &mdash; unauthorised copying or resale is prohibited.</footer>
 <script>
 let MODE='',XLSX='',HEAD=[];
+document.getElementById('plan').onchange=e=>{document.getElementById('fn').textContent=e.target.files[0]?e.target.files[0].name:'Click to choose plan .xlsx'};
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function go(mode){
   const msg=document.getElementById('msg'); const links=document.getElementById('links').value;
@@ -264,7 +315,7 @@ async function dl(){
   const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([u]));a.download=MODE=='plan'?'plan_with_live_links.xlsx':'live_links.xlsx';a.click();
 }
-</script></body>"""
+</script>"""
 
 
 class H(BaseHTTPRequestHandler):
