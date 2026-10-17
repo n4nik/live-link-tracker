@@ -72,7 +72,37 @@ def to_number(s):
     return int(float(s[:-1] if mult != 1 else s) * mult)
 
 
+def ig_creds():
+    """Instagram Graph API login: env vars on a server, or ~/.live_tracker_ig.json on your Mac."""
+    tok, uid = os.environ.get("IG_TOKEN"), os.environ.get("IG_USER_ID")
+    if not (tok and uid):
+        try:
+            c = json.load(open(os.path.expanduser("~/.live_tracker_ig.json")))
+            tok, uid = c.get("token"), c.get("user_id")
+        except Exception:
+            pass
+    return (tok, uid) if tok and uid else None
+
+
+def api_followers(username):
+    """Official Business Discovery call: exact followers for business/creator accounts."""
+    c = ig_creds()
+    if not c:
+        return None
+    q = urllib.parse.urlencode({
+        "fields": "business_discovery.username(%s){followers_count}" % username,
+        "access_token": c[0]})
+    try:
+        d = json.load(urllib.request.urlopen(f"https://graph.facebook.com/v21.0/{c[1]}?{q}", timeout=15))
+        return int(d["business_discovery"]["followers_count"])
+    except Exception:
+        return None
+
+
 def followers_of(username, deadline=None, attempts=3):
+    v = api_followers(username)  # official API first
+    if v is not None:
+        return v
     for attempt in range(attempts):
         for ua in (None, *BOT_UAS):  # Instagram serves bots when it blocks browsers
             if deadline and time.time() > deadline:
@@ -305,9 +335,10 @@ footer b{color:#fff}
  <div class=tw id=wrap></div><div id=extra></div>
 </div>
 </main>
-<footer>Red = duplicate link &middot; Yellow = missing, click to type<br><br>Tool made by <b>Nikhilesh Bhatia</b><br>&copy; 2026 Nikhilesh Bhatia. All rights reserved. Copyrighted &mdash; unauthorised copying or resale is prohibited.</footer>
+<footer><span id=apistat></span><br>Red = duplicate link &middot; Yellow = missing, click to type<br><br>Tool made by <b>Nikhilesh Bhatia</b><br>&copy; 2026 Nikhilesh Bhatia. All rights reserved. Copyrighted &mdash; unauthorised copying or resale is prohibited.</footer>
 <script>
 let MODE='',XLSX='',HEAD=[];
+fetch('/status').then(r=>r.json()).then(d=>{document.getElementById('apistat').textContent=d.api?'Instagram API: connected (exact followers)':'Instagram API: not connected (followers come from public pages)'}).catch(()=>{});
 const FN2='Optional: choose plan .xlsx to fill followers Instagram hides';
 try{const sn=localStorage.getItem('planName');if(sn&&localStorage.getItem('planB64'))document.getElementById('fn2').textContent='Saved plan: '+sn+' (used automatically) - click to change'}catch(e){}
 document.getElementById('plan2').onchange=e=>{const f=e.target.files[0];document.getElementById('fn2').textContent=f?f.name+' (saved for next time)':FN2;
@@ -372,6 +403,9 @@ async function dl(){
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/status":
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(json.dumps({"api": bool(ig_creds())}).encode()); return
         self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers()
         self.wfile.write(PAGE)
 
