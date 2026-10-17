@@ -72,9 +72,11 @@ def to_number(s):
     return int(float(s[:-1] if mult != 1 else s) * mult)
 
 
-def followers_of(username):
-    for attempt in range(2):
+def followers_of(username, deadline=None, attempts=3):
+    for attempt in range(attempts):
         for ua in (None, *BOT_UAS):  # Instagram serves bots when it blocks browsers
+            if deadline and time.time() > deadline:
+                return None
             html = fetch(f"https://www.instagram.com/{username}/", ua)
             m = re.search(r'content="([\d.,]+[KMB]?) Followers', html, re.I)
             if m:
@@ -132,8 +134,13 @@ def build_rows(text, followers=True):
             if re.fullmatch(r"[A-Za-z0-9._]{1,30}", first) and "instagram" not in first.lower():
                 user = first
         parsed.append((user, code, clean))
+    deadline = time.time() + 75  # keep the whole request under the host's time limit
     with ThreadPoolExecutor(2) as ex:
         rows = list(ex.map(one, parsed))
+    if followers:  # second pass: Instagram's blocking is random, so retry the misses
+        for r in rows:
+            if r["name"] and r["followers"] is None and time.time() < deadline:
+                r["followers"] = followers_of(r["name"], deadline, attempts=2)
     counts = {}
     for r in rows:
         counts[r["live"]] = counts.get(r["live"], 0) + 1
