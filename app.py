@@ -288,7 +288,10 @@ footer b{color:#fff}
 <footer>Red = duplicate link &middot; Yellow = missing, click to type<br><br>Tool made by <b>Nikhilesh Bhatia</b><br>&copy; 2026 Nikhilesh Bhatia. All rights reserved. Copyrighted &mdash; unauthorised copying or resale is prohibited.</footer>
 <script>
 let MODE='',XLSX='',HEAD=[];
-document.getElementById('plan2').onchange=e=>{document.getElementById('fn2').textContent=e.target.files[0]?e.target.files[0].name:'Optional: choose plan .xlsx to fill followers Instagram hides'};
+const FN2='Optional: choose plan .xlsx to fill followers Instagram hides';
+try{const sn=localStorage.getItem('planName');if(sn&&localStorage.getItem('planB64'))document.getElementById('fn2').textContent='Saved plan: '+sn+' (used automatically) - click to change'}catch(e){}
+document.getElementById('plan2').onchange=e=>{const f=e.target.files[0];document.getElementById('fn2').textContent=f?f.name+' (saved for next time)':FN2;
+ if(f){const fr=new FileReader();fr.onload=()=>{try{localStorage.setItem('planB64',fr.result.split(',')[1]);localStorage.setItem('planName',f.name)}catch(x){}};fr.readAsDataURL(f)}};
 document.getElementById('plan').onchange=e=>{document.getElementById('fn').textContent=e.target.files[0]?e.target.files[0].name:'Click to choose plan .xlsx'};
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function go(mode){
@@ -299,6 +302,7 @@ async function go(mode){
     const f=document.getElementById(mode=='plan'?'plan':'plan2').files[0];
     if(!f&&mode=='plan'){msg.textContent='Choose the plan .xlsx first.';return}
     if(f)file=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f)});
+    else if(mode=='tracker'){try{file=localStorage.getItem('planB64')||''}catch(e){}}
   }
   msg.textContent='Working... (looking up pages, can take a minute)';
   const res=await fetch('/'+mode,{method:'POST',body:JSON.stringify({links,file})});
@@ -312,7 +316,7 @@ async function go(mode){
      '</td><td contenteditable'+(r.followers?'':' class=gap')+'>'+esc(r.followers)+'</td><td>'+esc(r.live)+'</td><td>'+esc(r.date)+'</td></tr>').join('');
     document.getElementById('cp2').style.display='none';
     document.getElementById('note').textContent='Yellow cells are blank: click one and type to fill it (e.g. followers). Copy table copies everything you see.';
-    msg.textContent='Done: '+d.rows.length+' links.';
+    const miss=d.rows.filter(r=>!r.followers).length;msg.textContent='Done: '+d.rows.length+' links.'+(miss?' '+miss+' followers missing (yellow): upload your plan in the New tracker box and run again, or type them in.':' All followers filled.');
   } else {
     HEAD=['PAGE NAME','LIVE LINK','LIVE DATE'];
     h='<tr>'+HEAD.map(x=>'<th>'+x+'</th>').join('')+'</tr>'+d.table.map(r=>
