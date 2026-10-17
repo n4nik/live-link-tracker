@@ -81,6 +81,32 @@ def followers_of(username):
     return None
 
 
+def plan_followers(xlsx_bytes):
+    """name/username (lowercase) -> followers, read from an uploaded plan."""
+    ws = load_workbook(io.BytesIO(xlsx_bytes), data_only=True).active
+    heads = {str(c.value).strip().upper(): c.column for c in ws[1] if c.value}
+    nc = next((v for k, v in heads.items() if "NAME" in k), None)
+    lc = next((v for k, v in heads.items() if "LINK" in k), None)
+    fc = next((v for k, v in heads.items() if "FOLLOWER" in k), None)
+    out = {}
+    if not fc:
+        return out
+    for r in range(2, ws.max_row + 1):
+        v = ws.cell(r, fc).value
+        try:
+            v = int(float(str(v).replace(",", "")))
+        except (TypeError, ValueError):
+            continue
+        keys = []
+        if nc and ws.cell(r, nc).value: keys.append(str(ws.cell(r, nc).value))
+        if lc and ws.cell(r, lc).value:
+            m = re.search(r"instagram\.com/([A-Za-z0-9._]+)", str(ws.cell(r, lc).value))
+            if m: keys.append(m.group(1))
+        for k in keys:
+            out.setdefault(k.strip().lower().lstrip("@"), v)
+    return out
+
+
 def build_rows(text, followers=True):
     def one(p):
         user, code, clean = p
@@ -239,6 +265,7 @@ footer b{color:#fff}
  <div class=step><i>2</i>Choose what to make</div>
  <div class=opts>
   <div class=opt><h3>New tracker</h3><p>SNO, profile, followers, live link and live date in one table.</p>
+   <label class=file><input type=file id=plan2 accept=".xlsx"><span id=fn2>Optional: choose plan .xlsx to fill followers Instagram hides</span></label>
    <button class="pri" onclick="go('tracker')">Make tracker table</button></div>
   <div class=opt><h3>Fill my plan</h3><p>Upload your plan Excel and the live links are pasted next to each page.</p>
    <label class=file><input type=file id=plan accept=".xlsx"><span id=fn>Click to choose plan .xlsx</span></label>
@@ -261,16 +288,17 @@ footer b{color:#fff}
 <footer>Red = duplicate link &middot; Yellow = missing, click to type<br><br>Tool made by <b>Nikhilesh Bhatia</b><br>&copy; 2026 Nikhilesh Bhatia. All rights reserved. Copyrighted &mdash; unauthorised copying or resale is prohibited.</footer>
 <script>
 let MODE='',XLSX='',HEAD=[];
+document.getElementById('plan2').onchange=e=>{document.getElementById('fn2').textContent=e.target.files[0]?e.target.files[0].name:'Optional: choose plan .xlsx to fill followers Instagram hides'};
 document.getElementById('plan').onchange=e=>{document.getElementById('fn').textContent=e.target.files[0]?e.target.files[0].name:'Click to choose plan .xlsx'};
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function go(mode){
   const msg=document.getElementById('msg'); const links=document.getElementById('links').value;
   if(!links.trim()){msg.textContent='Paste some links first.';return}
   let file='';
-  if(mode=='plan'){
-    const f=document.getElementById('plan').files[0];
-    if(!f){msg.textContent='Choose the plan .xlsx first.';return}
-    file=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f)});
+  {
+    const f=document.getElementById(mode=='plan'?'plan':'plan2').files[0];
+    if(!f&&mode=='plan'){msg.textContent='Choose the plan .xlsx first.';return}
+    if(f)file=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f)});
   }
   msg.textContent='Working... (looking up pages, can take a minute)';
   const res=await fetch('/'+mode,{method:'POST',body:JSON.stringify({links,file})});
@@ -342,6 +370,11 @@ class H(BaseHTTPRequestHandler):
                 out = {"xlsx": b64(make_xlsx(rows))}
             else:
                 rows = build_rows(d["links"])
+                if d.get("file"):  # fill followers Instagram hides from the plan
+                    pf = plan_followers(base64.b64decode(d["file"]))
+                    for r in rows:
+                        if r["followers"] is None and r["name"].lower() in pf:
+                            r["followers"] = pf[r["name"].lower()]
                 out = {"rows": rows, "xlsx": b64(make_xlsx(rows))}
             body = json.dumps(out).encode()
         except Exception as ex:
