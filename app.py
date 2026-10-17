@@ -42,9 +42,14 @@ def date_from_shortcode(code):
         return ""
 
 
-def fetch(url):
+BOT_UAS = ["facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+           "Twitterbot/1.0",
+           "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"]
+
+
+def fetch(url, ua=None):
     try:
-        req = urllib.request.Request(url, headers=UA)
+        req = urllib.request.Request(url, headers=dict(UA, **({"User-Agent": ua} if ua else {})))
         return urllib.request.urlopen(req, timeout=15).read().decode("utf-8", "ignore")
     except Exception:
         return ""
@@ -68,9 +73,12 @@ def to_number(s):
 
 
 def followers_of(username):
-    html = fetch(f"https://www.instagram.com/{username}/")
-    m = re.search(r'content="([\d.,]+[KMB]?) Followers', html, re.I)
-    return to_number(m.group(1)) if m else None
+    for ua in (None, *BOT_UAS):  # Instagram serves bots when it blocks browsers
+        html = fetch(f"https://www.instagram.com/{username}/", ua)
+        m = re.search(r'content="([\d.,]+[KMB]?) Followers', html, re.I)
+        if m:
+            return to_number(m.group(1))
+    return None
 
 
 def build_rows(text, followers=True):
@@ -85,7 +93,7 @@ def build_rows(text, followers=True):
             "date": date_from_shortcode(code),
         }
     parsed = [parse_link(l) for l in re.split(r"[\s,]+", text) if l]
-    with ThreadPoolExecutor(6) as ex:
+    with ThreadPoolExecutor(4) as ex:
         rows = list(ex.map(one, [p for p in parsed if p]))
     counts = {}
     for r in rows:
@@ -135,6 +143,7 @@ def fill_plan(xlsx_bytes, text):
             if m: keys.append(m.group(1))
         for k in keys:
             by_user.setdefault(k.strip().lower().lstrip("@"), r)
+    orows = ws.max_row
     lc, dc = ws.max_column + 1, ws.max_column + 2
     hdr = ws.cell(1, 1)
     for col, t in ((lc, "LIVE LINK"), (dc, "LIVE DATE")):
@@ -167,22 +176,42 @@ def fill_plan(xlsx_bytes, text):
         for col, w in zip("ABCD", (26, 48, 14, 40)): e.column_dimensions[col].width = w
         for c in e[1]: c.font = Font(bold=True)
     buf = io.BytesIO(); wb.save(buf)
-    return buf.getvalue(), len(rows) - len(extra), len(extra)
+    table = [[str(ws.cell(r, name_col).value or "") if name_col else "", ws.cell(r, lc).value or "",
+              ws.cell(r, dc).value or ""] for r in range(2, orows + 1)]
+    return buf.getvalue(), len(rows) - len(extra), len(extra), table, [list(e) for e in extra]
 
 
 PAGE = b"""<!doctype html><meta charset=utf-8><title>Live Link Tracker</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<body style="font:16px system-ui;max-width:760px;margin:40px auto;padding:0 16px">
+<style>
+body{font:16px system-ui;max-width:1000px;margin:30px auto;padding:0 16px}
+button{padding:9px 16px;font-size:15px;cursor:pointer}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:10px}
+th{background:#1F3864;color:#fff;padding:6px;text-align:left;position:sticky;top:0}
+td{border:1px solid #ccc;padding:5px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr.dup td{background:#FF9999;color:#9C0006;font-weight:bold}
+td.gap{background:#FFF2CC}
+#wrap{max-height:520px;overflow:auto}
+</style>
+<body>
 <h2>Live Link Tracker</h2>
 <p>Paste the vendor's live links (one per line). Anything after <code>?</code> is removed. Duplicates are marked red.</p>
-<textarea id=links rows=12 style="width:100%;font:14px monospace" placeholder="https://www.instagram.com/reel/XXXX/?igsh=..."></textarea>
-<p><b>Option A &ndash; New tracker</b><br>
-<button onclick="go('tracker')" style="padding:10px 20px;font-size:16px">Download tracker Excel</button></p>
+<textarea id=links rows=9 style="width:100%;font:14px monospace" placeholder="https://www.instagram.com/reel/XXXX/?igsh=..."></textarea>
+<p><b>Option A &ndash; New tracker</b><br><button onclick="go('tracker')">Make tracker table</button></p>
 <p><b>Option B &ndash; Paste into an existing plan</b><br>
-<input type=file id=plan accept=".xlsx"> 
-<button onclick="go('plan')" style="padding:10px 20px;font-size:16px">Fill plan with live links</button></p>
+<input type=file id=plan accept=".xlsx"> <button onclick="go('plan')">Fill plan with live links</button></p>
 <p id=msg style="color:#444"></p>
+<div id=out style="display:none">
+ <button onclick="dl()">Download Excel</button>
+ <button id=cp1 onclick="cp(0,true)">Copy table</button>
+ <button id=cp2 onclick="cp(1,false)" style="display:none">Copy LIVE LINK + DATE only</button>
+ <span id=cmsg style="color:green"></span>
+ <p id=note style="font-size:13px;color:#666"></p>
+ <div id=wrap></div><div id=extra></div>
+</div>
 <script>
+let MODE='',XLSX='',HEAD=[];
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function go(mode){
   const msg=document.getElementById('msg'); const links=document.getElementById('links').value;
   if(!links.trim()){msg.textContent='Paste some links first.';return}
@@ -195,9 +224,45 @@ async function go(mode){
   msg.textContent='Working... (looking up pages, can take a minute)';
   const res=await fetch('/'+mode,{method:'POST',body:JSON.stringify({links,file})});
   if(!res.ok){msg.textContent='Error: '+await res.text();return}
-  const blob=await res.blob(); const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download=mode=='plan'?'plan_with_live_links.xlsx':'live_links.xlsx'; a.click();
-  msg.textContent='Done. '+(res.headers.get('X-Summary')||'');
+  const d=await res.json(); MODE=mode; XLSX=d.xlsx||'';
+  let h='';
+  if(mode=='tracker'){
+    HEAD=['SNO','PROFILE NAME','PROFILE LINK','FOLLOWERS','LIVE LINK','LIVE DATE'];
+    h='<tr>'+HEAD.map(x=>'<th>'+x+'</th>').join('')+'</tr>'+d.rows.map((r,i)=>
+     '<tr'+(r.dup?' class=dup':'')+'><td>'+(i+1)+'</td><td'+(r.name?'':' class=gap')+'>'+esc(r.name)+'</td><td'+(r.plink?'':' class=gap')+'>'+esc(r.plink)+
+     '</td><td contenteditable'+(r.followers?'':' class=gap')+'>'+esc(r.followers)+'</td><td>'+esc(r.live)+'</td><td>'+esc(r.date)+'</td></tr>').join('');
+    document.getElementById('cp2').style.display='none';
+    document.getElementById('note').textContent='Yellow cells are blank: click one and type to fill it (e.g. followers). Copy table copies everything you see.';
+    msg.textContent='Done: '+d.rows.length+' links.';
+  } else {
+    HEAD=['PAGE NAME','LIVE LINK','LIVE DATE'];
+    h='<tr>'+HEAD.map(x=>'<th>'+x+'</th>').join('')+'</tr>'+d.table.map(r=>
+     '<tr><td>'+esc(r[0])+'</td><td'+(r[1]?'':' class=gap')+'>'+esc(r[1])+'</td><td'+(r[2]?'':' class=gap')+'>'+esc(r[2])+'</td></tr>').join('');
+    document.getElementById('cp2').style.display='';
+    document.getElementById('note').textContent='Rows are in the same order as your plan. "Copy LIVE LINK + DATE only" gives two columns you can paste right next to your plan in Excel.';
+    msg.textContent='Done: '+d.summary;
+    document.getElementById('extra').innerHTML=d.extra.length?'<h4>Not pasted</h4><table><tr><th>PAGE</th><th>LINK</th><th>DATE</th><th>REASON</th></tr>'+d.extra.map(e=>'<tr><td>'+e.map(esc).join('</td><td>')+'</td></tr>').join('')+'</table>':'';
+  }
+  document.getElementById('wrap').innerHTML='<table>'+h+'</table>';
+  document.getElementById('out').style.display='';
+}
+function rowsText(from,withHead){
+  const rows=[...document.querySelectorAll('#wrap tr')].slice(withHead?0:1);
+  return rows.map(r=>[...r.cells].slice(from).map(c=>c.innerText.replace(/[\\t\\r\\n]+/g,' ').trim()).join(String.fromCharCode(9))).join(String.fromCharCode(10));
+}
+async function cp(from,withHead){
+  const t=rowsText(from,withHead||(from>0&&false));
+  try{await navigator.clipboard.writeText(t)}catch(e){const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}
+  document.getElementById('cmsg').textContent=' Copied! Now paste in Excel (Ctrl/Cmd+V).';
+}
+async function dl(){
+  let b64=XLSX;
+  if(MODE=='tracker'){
+    const rows=[...document.querySelectorAll('#wrap tr')].slice(1).map(r=>({name:r.cells[1].innerText,plink:r.cells[2].innerText,followers:r.cells[3].innerText.replace(/,/g,''),live:r.cells[4].innerText,date:r.cells[5].innerText,dup:r.className=='dup'}));
+    const res=await fetch('/export',{method:'POST',body:JSON.stringify({rows})}); b64=(await res.json()).xlsx;
+  }
+  const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([u]));a.download=MODE=='plan'?'plan_with_live_links.xlsx':'live_links.xlsx';a.click();
 }
 </script></body>"""
 
@@ -212,19 +277,27 @@ class H(BaseHTTPRequestHandler):
             n = int(self.headers["Content-Length"])
             if n > 8_000_000: raise ValueError("File too large (max ~5 MB)")
             d = json.loads(self.rfile.read(n))
-            if len(re.findall(r"instagram\.com", d["links"])) > 300: raise ValueError("Max 300 links per run")
-            summary = ""
+            if len(re.findall(r"instagram\.com", d.get("links", ""))) > 300: raise ValueError("Max 300 links per run")
+            b64 = lambda b: base64.b64encode(b).decode()
             if self.path == "/plan":
-                data, ok, bad = fill_plan(base64.b64decode(d["file"]), d["links"])
-                summary = f"{ok} pasted into plan, {bad} listed on the 'Not pasted' sheet."
+                data, ok, bad, table, extra = fill_plan(base64.b64decode(d["file"]), d["links"])
+                out = {"xlsx": b64(data), "table": table, "extra": extra,
+                       "summary": f"{ok} pasted into plan, {bad} not pasted."}
+            elif self.path == "/export":
+                rows = d["rows"]
+                for r in rows:
+                    f = str(r.get("followers") or "").strip()
+                    r["followers"] = int(float(f)) if re.fullmatch(r"[\d.]+", f) else None
+                out = {"xlsx": b64(make_xlsx(rows))}
             else:
-                data = make_xlsx(build_rows(d["links"]))
-        except Exception as e:
-            self.send_response(500); self.end_headers(); self.wfile.write(str(e).encode()); return
+                rows = build_rows(d["links"])
+                out = {"rows": rows, "xlsx": b64(make_xlsx(rows))}
+            body = json.dumps(out).encode()
+        except Exception as ex:
+            self.send_response(500); self.end_headers(); self.wfile.write(str(ex).encode()); return
         self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        self.send_header("X-Summary", summary)
-        self.end_headers(); self.wfile.write(data)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers(); self.wfile.write(body)
 
 
 if __name__ == "__main__":
