@@ -4,7 +4,7 @@
 Run:  python3 live_tracker.py      then open http://localhost:8765
 Columns: SNO | PROFILE NAME | PROFILE LINK | FOLLOWERS | LIVE LINK | LIVE DATE
 """
-import os, io, re, json, base64, urllib.request, urllib.parse
+import os, time, io, re, json, base64, urllib.request, urllib.parse
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -73,11 +73,13 @@ def to_number(s):
 
 
 def followers_of(username):
-    for ua in (None, *BOT_UAS):  # Instagram serves bots when it blocks browsers
-        html = fetch(f"https://www.instagram.com/{username}/", ua)
-        m = re.search(r'content="([\d.,]+[KMB]?) Followers', html, re.I)
-        if m:
-            return to_number(m.group(1))
+    for attempt in range(2):
+        for ua in (None, *BOT_UAS):  # Instagram serves bots when it blocks browsers
+            html = fetch(f"https://www.instagram.com/{username}/", ua)
+            m = re.search(r'content="([\d.,]+[KMB]?) Followers', html, re.I)
+            if m:
+                return to_number(m.group(1))
+        time.sleep(1.5)
     return None
 
 
@@ -118,9 +120,20 @@ def build_rows(text, followers=True):
             "live": clean,
             "date": date_from_shortcode(code),
         }
-    parsed = [parse_link(l) for l in re.split(r"[\s,]+", text) if l]
-    with ThreadPoolExecutor(4) as ex:
-        rows = list(ex.map(one, [p for p in parsed if p]))
+    parsed = []
+    for line in text.splitlines():
+        p = parse_link(line)
+        if not p or line.lower().count("instagram.com") > 1:  # a line holding several links
+            parsed += [q for q in (parse_link(t) for t in re.split(r"[\s,]+", line) if t) if q]
+            continue
+        user, code, clean = p
+        if not user:  # vendor often pastes: username <tab> link
+            first = re.split(r"[\s,]+", line.strip())[0].lstrip("@")
+            if re.fullmatch(r"[A-Za-z0-9._]{1,30}", first) and "instagram" not in first.lower():
+                user = first
+        parsed.append((user, code, clean))
+    with ThreadPoolExecutor(2) as ex:
+        rows = list(ex.map(one, parsed))
     counts = {}
     for r in rows:
         counts[r["live"]] = counts.get(r["live"], 0) + 1
